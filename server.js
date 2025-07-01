@@ -19,6 +19,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 // Create Express app
 const app = express();
 app.use(cors()); // allow all origins
+app.use(express.json()); // allow JSON bodies
 
 // Upload helper
 function uploadToCloudinary(imageBuffer, options = {}) {
@@ -32,7 +33,10 @@ function uploadToCloudinary(imageBuffer, options = {}) {
       },
       (error, result) => {
         if (error) return reject(error);
-        resolve(result.secure_url);
+        resolve({
+          secure_url: result.secure_url,
+          public_id: result.public_id,
+        });
       }
     );
     uploadStream.end(imageBuffer);
@@ -48,21 +52,55 @@ app.post('/upload-image', upload.single('image'), async (req, res) => {
 
     const imageBuffer = req.file.buffer;
     const fileName = `${Date.now()}-${req.file.originalname}`;
+    const filePublicId = `uploads/${path.parse(fileName).name}`;
 
-    const cloudURL = await uploadToCloudinary(imageBuffer, {
-      public_id: path.parse(fileName).name,
+    const result = await uploadToCloudinary(imageBuffer, {
+      public_id: filePublicId,
     });
 
     res.json({
       success: true,
       urls: {
-        cloudURL,
+        cloudURL: result.secure_url,
+        publicId: result.public_id,
       },
     });
   } catch (error) {
     res.status(500).json({
       success: false,
       error: 'Cloudinary upload failed',
+      message: error.message,
+    });
+  }
+});
+
+// DELETE route: /delete-image
+app.delete('/delete-image', async (req, res) => {
+  const { public_id } = req.body;
+
+  if (!public_id) {
+    return res.status(400).json({ success: false, error: 'Missing public_id' });
+  }
+
+  try {
+    const result = await cloudinary.uploader.destroy(public_id, {
+      resource_type: 'image',
+      invalidate: true // Invalidate CDN cache
+    });
+
+    if (result.result !== 'ok') {
+      return res.status(404).json({
+        success: false,
+        message: 'Image deletion failed',
+        result,
+      });
+    }
+
+    res.json({ success: true, message: 'Image deleted successfully', result });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Cloudinary delete failed',
       message: error.message,
     });
   }
