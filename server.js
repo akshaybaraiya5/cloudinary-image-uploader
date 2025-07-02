@@ -58,6 +58,8 @@ app.post('/upload-image', upload.single('image'), async (req, res) => {
       public_id: filePublicId,
     });
 
+    console.log('Upload successful:', result.public_id);
+
     res.json({
       success: true,
       urls: {
@@ -66,6 +68,7 @@ app.post('/upload-image', upload.single('image'), async (req, res) => {
       },
     });
   } catch (error) {
+    console.error('Upload error:', error);
     res.status(500).json({
       success: false,
       error: 'Cloudinary upload failed',
@@ -76,38 +79,99 @@ app.post('/upload-image', upload.single('image'), async (req, res) => {
 
 // DELETE route: /delete-image
 app.delete('/delete-image', async (req, res) => {
+  console.log('DELETE request received');
+  console.log('Request body:', req.body);
+  console.log('Request headers:', req.headers);
+  
   const { public_id } = req.body;
 
   if (!public_id) {
-    return res.status(400).json({ success: false, error: 'Missing public_id' });
+    console.log('Missing public_id in request');
+    return res.status(400).json({ 
+      success: false, 
+      error: 'Missing public_id in request body',
+      received: req.body
+    });
   }
 
+  console.log('Attempting to delete image with public_id:', public_id);
+
   try {
+    // First, let's check if the image exists
+    let imageExists = false;
+    try {
+      const resourceInfo = await cloudinary.api.resource(public_id, {
+        resource_type: 'image'
+      });
+      imageExists = true;
+      console.log('Image found:', resourceInfo.public_id);
+    } catch (checkError) {
+      console.log('Image check error:', checkError.message);
+      if (checkError.error && checkError.error.http_code === 404) {
+        return res.status(404).json({
+          success: false,
+          error: 'Image not found',
+          message: 'The image with the provided public_id does not exist'
+        });
+      }
+    }
+
+    // Attempt to delete the image
     const result = await cloudinary.uploader.destroy(public_id, {
       resource_type: 'image',
       invalidate: true // Invalidate CDN cache
     });
 
-    if (result.result !== 'ok') {
-      return res.status(404).json({
+    console.log('Delete result:', result);
+
+    // Check various possible results
+    if (result.result === 'ok') {
+      res.json({ 
+        success: true, 
+        message: 'Image deleted successfully', 
+        result 
+      });
+    } else if (result.result === 'not found') {
+      res.status(404).json({
         success: false,
-        message: 'Image deletion failed',
-        result,
+        error: 'Image not found',
+        message: 'The image with the provided public_id does not exist',
+        result
+      });
+    } else {
+      // Handle other possible results
+      res.status(400).json({
+        success: false,
+        error: 'Image deletion failed',
+        message: `Deletion returned: ${result.result}`,
+        result
       });
     }
 
-    res.json({ success: true, message: 'Image deleted successfully', result });
   } catch (error) {
+    console.error('Delete error:', error);
     res.status(500).json({
       success: false,
       error: 'Cloudinary delete failed',
       message: error.message,
+      details: error
     });
   }
+});
+
+
+// Health check route
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', message: 'Server is running' });
 });
 
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`📋 Available endpoints:`);
+  console.log(`   GET /health - Health check`);
+  console.log(`   POST /upload-image - Upload an image`);
+  console.log(`   DELETE /delete-image - Delete an image by public_id`);
+
 });
